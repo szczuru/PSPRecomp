@@ -562,6 +562,13 @@ std::mutex &global_configuration_mutex() {
 void set_environment_value(const char *name, const std::string &value) {
 #if defined(_WIN32)
     _putenv_s(name, value.c_str());
+#elif defined(__SWITCH__)
+    // devkitA64's newlib exports setenv() but hides its prototype under
+    // -std=c++20 (this project builds with CMAKE_CXX_EXTENSIONS OFF, i.e.
+    // strict ISO mode). The symbol is still there, so declare it ourselves
+    // instead of fighting feature-test-macro header ordering.
+    extern "C" int setenv(const char *envname, const char *envval, int overwrite);
+    setenv(name, value.c_str(), 1);
 #else
     setenv(name, value.c_str(), 1);
 #endif
