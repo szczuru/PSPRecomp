@@ -588,6 +588,11 @@ void install_project2dfx(psprecomp::Runtime &runtime,
     if(g_cfg.performance_log){
 #ifdef _WIN32
         _putenv_s("PSPRECOMP_GPU_TIMING_DIAG","1");
+#elif defined(__SWITCH__)
+        // See vcs_config.cpp for why this needs its own extern "C" declaration
+        // on devkitA64/newlib under -std=c++20.
+        extern "C" int setenv(const char *envname, const char *envval, int overwrite);
+        setenv("PSPRECOMP_GPU_TIMING_DIAG","1",0);
 #else
         setenv("PSPRECOMP_GPU_TIMING_DIAG","1",0);
 #endif
