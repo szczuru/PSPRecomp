@@ -9069,6 +9069,11 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             std::tm parts{};
 #if defined(_WIN32)
             localtime_s(&parts, &seconds);
+#elif defined(__SWITCH__)
+            // Same strict -std=c++20/newlib visibility issue as setenv() in
+            // vcs_config.cpp: the symbol exists, the prototype is hidden.
+            extern "C" struct tm *localtime_r(const std::time_t *timer, struct tm *result);
+            localtime_r(&seconds, &parts);
 #else
             localtime_r(&seconds, &parts);
 #endif
