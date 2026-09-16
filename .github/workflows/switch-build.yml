@@ -5,8 +5,6 @@ name: Build VCSNative (Nintendo Switch)
 # package names or CMake flags on the first real run in Actions.
 
 on:
-  push:
-    branches: [switch-port]
   pull_request:
     branches: [switch-port]
   workflow_dispatch:
