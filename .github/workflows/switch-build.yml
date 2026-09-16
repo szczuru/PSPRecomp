@@ -1,0 +1,67 @@
+name: Build VCSNative (Nintendo Switch)
+
+# Unverified: written against the documented devkitpro/devkita64 Docker
+# image and its dkp-pacman package names, not run here. Expect to fix
+# package names or CMake flags on the first real run in Actions.
+
+on:
+  push:
+    branches: [switch-port]
+  pull_request:
+    branches: [switch-port]
+  workflow_dispatch:
+
+jobs:
+  build-switch:
+    runs-on: ubuntu-latest
+    # Official devkitPro image: has devkitA64 + libnx preinstalled under
+    # /opt/devkitpro. See https://hub.docker.com/r/devkitpro/devkita64
+    container: devkitpro/devkita64:latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # switch-ffmpeg isn't in the base image; the profile's CMakeLists.txt
+      # (NINTENDO_SWITCH branch) find_library()s avcodec/avformat/avutil/
+      # swresample/swscale by name and needs this installed first.
+      - name: Install extra devkitPro packages
+        shell: bash
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          export PATH="${DEVKITPRO}/tools/bin:${PATH}"
+          dkp-pacman -Sy --noconfirm --needed switch-ffmpeg switch-cmake
+
+      - name: Configure
+        shell: bash
+        run: |
+          export DEVKITPRO=/opt/devkitpro
+          cmake -B build-switch \
+            -DCMAKE_TOOLCHAIN_FILE="${DEVKITPRO}/cmake/Switch.cmake" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DPSPRECOMP_PROFILE=vcs \
+            -DPSPRECOMP_BUILD_TESTS=OFF \
+            -DPSPRECOMP_BUILD_PROFILE_TESTS=OFF
+
+      - name: Build
+        shell: bash
+        run: cmake --build build-switch --target VCSNative -- -j"$(nproc)"
+
+      - name: Locate build output
+        shell: bash
+        run: |
+          echo "Looking for .nro/.nacp/.elf output:"
+          find build-switch -maxdepth 4 \( -name '*.nro' -o -name '*.nacp' -o -name 'VCSNative' \) -print
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v4
+        with:
+          name: VCSNative-switch
+          path: |
+            build-switch/**/*.nro
+            build-switch/**/*.nacp
+            build-switch/**/VCSNative
+          if-no-files-found: warn
+          retention-days: 14

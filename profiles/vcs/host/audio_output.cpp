@@ -533,6 +533,141 @@ void audio_output_shutdown() {
 
 } // namespace vcs
 
+#elif defined(__SWITCH__)
+
+// First-draft Nintendo Switch audio sink using libnx audout (fixed 48 kHz
+// stereo S16 PCM). Unverified against hardware. It is deliberately simple: it
+// linearly resamples whatever the guest submits to 48 kHz and mixes every PSP
+// channel into one interleaved stream, with no per-channel volume applied.
+// The other platforms' audio_resampler.hpp almost certainly already carries
+// that volume/mixing logic (the `left`/`right` parameters here are PSP pan or
+// volume, not sample indices) -- reuse it instead of this stand-in once you
+// confirm its exact interface, rather than trusting the placeholder mix below
+// for anything beyond "does sound come out at all".
+#include <switch.h>
+
+#include <array>
+#include <cstring>
+#include <mutex>
+#include <vector>
+
+namespace vcs {
+namespace {
+
+constexpr std::uint32_t kSwitchSampleRate = 48000u;
+constexpr std::uint32_t kSwitchChannels = 2u;
+constexpr std::size_t kAudioBufferCount = 4u;
+constexpr std::size_t kAudioBufferFrames = 4096u;  // ~85 ms per buffer at 48 kHz
+
+struct SwitchAudioBuffer {
+    AudioOutBuffer out{};
+    std::vector<std::int16_t> samples;
+};
+
+struct SwitchAudioState {
+    bool initialized{false};
+    std::array<SwitchAudioBuffer, kAudioBufferCount> buffers{};
+    std::size_t next_buffer{0u};
+    std::mutex mutex;
+    std::vector<std::int16_t> pending;  // interleaved stereo accumulator
+};
+
+SwitchAudioState &state() {
+    static SwitchAudioState s;
+    return s;
+}
+
+void ensure_initialized() {
+    SwitchAudioState &s = state();
+    if (s.initialized) return;
+    if (R_FAILED(audoutInitialize())) return;
+    if (R_FAILED(audoutStartAudioOut())) return;
+    for (SwitchAudioBuffer &buffer : s.buffers) {
+        buffer.samples.assign(kAudioBufferFrames * kSwitchChannels, 0);
+        buffer.out.next = nullptr;
+        buffer.out.buffer = buffer.samples.data();
+        buffer.out.buffer_size = static_cast<u64>(buffer.samples.size() * sizeof(std::int16_t));
+        buffer.out.data_size = buffer.out.buffer_size;
+        buffer.out.data_offset = 0u;
+    }
+    s.initialized = true;
+}
+
+void flush_ready_buffers() {
+    SwitchAudioState &s = state();
+    if (!s.initialized) return;
+    while (s.pending.size() >= kAudioBufferFrames * kSwitchChannels) {
+        SwitchAudioBuffer &buffer = s.buffers[s.next_buffer];
+        std::memcpy(buffer.samples.data(), s.pending.data(),
+                   kAudioBufferFrames * kSwitchChannels * sizeof(std::int16_t));
+        s.pending.erase(s.pending.begin(),
+                        s.pending.begin() + static_cast<std::ptrdiff_t>(kAudioBufferFrames * kSwitchChannels));
+        audoutAppendAudioOutBuffer(&buffer.out);
+        s.next_buffer = (s.next_buffer + 1u) % kAudioBufferCount;
+    }
+}
+
+} // namespace
+
+bool audio_output_enabled() {
+    const char *text = std::getenv("PSPRECOMP_AUDIO");
+    return text == nullptr || text[0] != '0';
+}
+
+void audio_output_submit(std::span<const std::int16_t> pcm, std::uint32_t frames,
+                         bool stereo, std::uint32_t /*left_volume*/, std::uint32_t /*right_volume*/,
+                         std::uint32_t source_rate, std::uint32_t /*channel*/,
+                         std::uint64_t /*guest_time_us*/) {
+    if (!audio_output_enabled() || frames == 0u || pcm.empty()) return;
+    ensure_initialized();
+    SwitchAudioState &s = state();
+    if (!s.initialized) return;
+    std::lock_guard<std::mutex> lock(s.mutex);
+
+    const std::uint32_t rate = source_rate == 0u ? kSwitchSampleRate : source_rate;
+    const double ratio = static_cast<double>(kSwitchSampleRate) / static_cast<double>(rate);
+    const auto out_frames = static_cast<std::uint32_t>(static_cast<double>(frames) * ratio);
+    const std::size_t base = s.pending.size();
+    s.pending.resize(base + static_cast<std::size_t>(out_frames) * kSwitchChannels);
+    for (std::uint32_t i = 0; i < out_frames; ++i) {
+        std::uint32_t src_index = static_cast<std::uint32_t>(static_cast<double>(i) / ratio);
+        if (src_index >= frames) src_index = frames - 1u;
+        std::int16_t left_sample;
+        std::int16_t right_sample;
+        if (stereo) {
+            left_sample = pcm[static_cast<std::size_t>(src_index) * 2u];
+            right_sample = pcm[static_cast<std::size_t>(src_index) * 2u + 1u];
+        } else {
+            left_sample = right_sample = pcm[src_index];
+        }
+        s.pending[base + static_cast<std::size_t>(i) * 2u] = left_sample;
+        s.pending[base + static_cast<std::size_t>(i) * 2u + 1u] = right_sample;
+    }
+    flush_ready_buffers();
+}
+
+void audio_output_advance(std::uint64_t) {
+    std::lock_guard<std::mutex> lock(state().mutex);
+    flush_ready_buffers();
+}
+
+void audio_output_reset_channel(std::uint32_t) {
+    // Per-PSP-channel continuity is not tracked separately here; every
+    // channel mixes into the one shared `pending` stream above.
+}
+
+void audio_output_shutdown() {
+    SwitchAudioState &s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (!s.initialized) return;
+    audoutStopAudioOut();
+    audoutExit();
+    s.initialized = false;
+    s.pending.clear();
+}
+
+} // namespace vcs
+
 #else
 
 namespace vcs {

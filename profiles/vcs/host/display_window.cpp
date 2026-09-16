@@ -925,6 +925,163 @@ void display_window_shutdown() {
 
 } // namespace vcs
 
+#elif defined(__SWITCH__)
+
+// First-draft Nintendo Switch presenter. There is no native GE GPU backend
+// for this platform yet (ge_gpu_backend_dx12.cpp already falls back to
+// GeGpuBackendKind::Software off-Windows, see its non-_WIN32 branch), so this
+// file only has to get the CPU-rasterized PSP framebuffer onto the screen and
+// libnx pad input back into the same HostInputState the other platforms fill.
+// Unverified: written against documented libnx APIs but not yet built or run
+// on hardware/devkitA64. Treat it as a starting point, not a finished port.
+#include <switch.h>
+
+#include <algorithm>
+#include <cstring>
+
+namespace vcs {
+namespace {
+
+constexpr std::uint32_t kSwitchDisplayWidth = 1280u;
+constexpr std::uint32_t kSwitchDisplayHeight = 720u;
+
+struct SwitchWindowState {
+    Framebuffer fb{};
+    PadState pad{};
+    bool started{false};
+    std::uint32_t buttons{};
+    std::uint8_t analog_x{128u};
+    std::uint8_t analog_y{128u};
+};
+
+SwitchWindowState &state() {
+    static SwitchWindowState s;
+    return s;
+}
+
+// Integer-scaled, letterboxed, nearest-neighbour blit. Good enough to get a
+// 480x272 PSP frame on screen; a real upscale belongs in a future GPU-backed
+// presenter (deko3d), not in the CPU present path.
+void blit_rgba_nearest(const std::byte *src, std::uint32_t src_w, std::uint32_t src_h,
+                       std::uint8_t *dst, std::uint32_t dst_stride,
+                       std::uint32_t dst_w, std::uint32_t dst_h) {
+    if (src_w == 0u || src_h == 0u) return;
+    const std::uint32_t scale = std::max(1u, std::min(dst_w / src_w, dst_h / src_h));
+    const std::uint32_t out_w = src_w * scale;
+    const std::uint32_t out_h = src_h * scale;
+    const std::uint32_t off_x = (dst_w - out_w) / 2u;
+    const std::uint32_t off_y = (dst_h - out_h) / 2u;
+    std::memset(dst, 0, static_cast<std::size_t>(dst_stride) * dst_h);
+    const auto *src_bytes = reinterpret_cast<const std::uint8_t *>(src);
+    for (std::uint32_t y = 0; y < out_h; ++y) {
+        const std::uint32_t sy = y / scale;
+        std::uint8_t *row = dst + static_cast<std::size_t>(off_y + y) * dst_stride + off_x * 4u;
+        const std::uint8_t *src_row = src_bytes + static_cast<std::size_t>(sy) * src_w * 4u;
+        for (std::uint32_t x = 0; x < out_w; ++x) {
+            const std::uint32_t sx = x / scale;
+            std::memcpy(row + static_cast<std::size_t>(x) * 4u, src_row + static_cast<std::size_t>(sx) * 4u, 4u);
+        }
+    }
+}
+
+} // namespace
+
+bool display_window_enabled() {
+    const char *text = std::getenv("PSPRECOMP_WINDOW");
+    return text == nullptr || text[0] != '0';
+}
+
+void display_window_start() {
+    if (!display_window_enabled()) return;
+    SwitchWindowState &s = state();
+    if (s.started) return;
+    framebufferCreate(&s.fb, nwindowGetDefault(), kSwitchDisplayWidth, kSwitchDisplayHeight,
+                      PIXEL_FORMAT_RGBA_8888, 2);
+    framebufferMakeLinear(&s.fb);
+    padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+    padInitializeDefault(&s.pad);
+    s.started = true;
+}
+
+void display_window_set_status(const char *) {}
+void display_window_set_aspect_lock(bool) noexcept {}
+
+void display_window_present(const psprecomp::GuestMemory &memory,
+                            const FramebufferDescription &description) {
+    if (!state().started || description.width == 0u || description.height == 0u) return;
+    const std::vector<std::byte> rgba = decode_framebuffer_rgba(memory, description);
+    display_window_present_rgba(rgba, description.width, description.height);
+}
+
+void display_window_present_rgba(std::span<const std::byte> rgba,
+                                 std::uint32_t width, std::uint32_t height) {
+    SwitchWindowState &s = state();
+    if (!s.started || width == 0u || height == 0u) return;
+    if (rgba.size() < static_cast<std::size_t>(width) * height * 4u) return;
+    u32 stride = 0u;
+    auto *out = reinterpret_cast<std::uint8_t *>(framebufferBegin(&s.fb, &stride));
+    if (out == nullptr) return;
+    blit_rgba_nearest(rgba.data(), width, height, out, stride, kSwitchDisplayWidth, kSwitchDisplayHeight);
+    framebufferEnd(&s.fb);
+}
+
+DisplayWindowSurface display_window_surface() { return {}; }
+
+std::uint32_t display_window_buttons() { return state().buttons; }
+
+void display_window_analog(std::uint8_t &x, std::uint8_t &y) {
+    x = state().analog_x;
+    y = state().analog_y;
+}
+
+HostInputState display_window_input() {
+    SwitchWindowState &s = state();
+    if (!s.started) return {};
+    padUpdate(&s.pad);
+    const u64 held = padGetButtons(&s.pad);
+
+    std::uint32_t mask = 0u;
+    if (held & HidNpadButton_Minus) mask |= 0x000001u;  // Select
+    if (held & HidNpadButton_Plus) mask |= 0x000008u;   // Start
+    if (held & (HidNpadButton_Up | HidNpadButton_StickLUp)) mask |= 0x000010u;
+    if (held & (HidNpadButton_Right | HidNpadButton_StickLRight)) mask |= 0x000020u;
+    if (held & (HidNpadButton_Down | HidNpadButton_StickLDown)) mask |= 0x000040u;
+    if (held & (HidNpadButton_Left | HidNpadButton_StickLLeft)) mask |= 0x000080u;
+    if (held & HidNpadButton_L) mask |= 0x000100u;
+    if (held & HidNpadButton_R) mask |= 0x000200u;
+    if (held & HidNpadButton_X) mask |= 0x001000u;  // Triangle
+    if (held & HidNpadButton_A) mask |= 0x002000u;  // Circle
+    if (held & HidNpadButton_B) mask |= 0x004000u;  // Cross
+    if (held & HidNpadButton_Y) mask |= 0x008000u;  // Square
+    s.buttons = mask;
+
+    const HidAnalogStickState left = padGetStickPos(&s.pad, 0);
+    s.analog_x = static_cast<std::uint8_t>(std::clamp(128 + (left.x >> 8), 0, 255));
+    s.analog_y = static_cast<std::uint8_t>(std::clamp(128 - (left.y >> 8), 0, 255));
+    const HidAnalogStickState right = padGetStickPos(&s.pad, 1);
+
+    HostInputState result;
+    result.buttons = mask;
+    result.analog_x = s.analog_x;
+    result.analog_y = s.analog_y;
+    result.camera_x = right.x >> 8;
+    result.camera_y = -(right.y >> 8);
+    result.accelerate = (held & HidNpadButton_ZR) != 0u;
+    result.brake = (held & HidNpadButton_ZL) != 0u;
+    return result;
+}
+
+bool display_window_close_requested() { return !appletMainLoop(); }
+
+void display_window_shutdown() {
+    SwitchWindowState &s = state();
+    if (!s.started) return;
+    framebufferClose(&s.fb);
+    s.started = false;
+}
+
+} // namespace vcs
+
 #else
 
 namespace vcs {

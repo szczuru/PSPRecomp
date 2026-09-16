@@ -152,6 +152,18 @@ function(vcs_target_common target)
                 "${VCS_PROFILE_DIR}/third_party/ffmpeg/lib/${VCS_FFMPEG_LIB}.lib")
         endforeach()
         target_link_libraries(${target} PRIVATE winmm d3d12 dxgi d3dcompiler dxguid)
+    elseif(NINTENDO_SWITCH)
+        # Untested: assumes the devkitPro switch-ffmpeg portlib is installed
+        # (`dkp-pacman -S switch-ffmpeg`) and that the devkitA64 CMake
+        # toolchain already points CMAKE_FIND_ROOT_PATH at
+        # $DEVKITPRO/portlibs/switch, which is how devkitPro's own toolchain
+        # file behaves. If find_library fails here, install that portlib
+        # first rather than changing this search.
+        foreach(VCS_FFMPEG_LIB avcodec avformat avutil swresample swscale)
+            find_library(VCS_SWITCH_${VCS_FFMPEG_LIB} NAMES ${VCS_FFMPEG_LIB} REQUIRED)
+            target_link_libraries(${target} PRIVATE ${VCS_SWITCH_${VCS_FFMPEG_LIB}})
+        endforeach()
+        target_link_libraries(${target} PRIVATE nx)
     else()
         # The profile vendors FFmpeg 7 headers. Some validation hosts install only
         # the versioned runtime sonames (without development symlinks), so accept
@@ -218,6 +230,31 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${VCS_PROFILE_DIR}/third_party/ffmpeg/COPYING.LGPLv2.1"
             "$<TARGET_FILE_DIR:VCSNative>/COPYING.LGPLv2.1")
+endif()
+
+if(NINTENDO_SWITCH)
+    # Untested packaging step. Requires devkitPro's switch-cmake support
+    # (nx_generate_nacp / nx_create_nro), normally pulled in by building with
+    # -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake. VCSNative.ini,
+    # ProperShaders.ini and VCSProject2DFX_Lights.bin are copied to
+    # $<TARGET_FILE_DIR:VCSNative> below regardless of platform; on Switch
+    # they still need to end up on the SD card next to the .nro (or inside a
+    # romfs) for vcs_bootstrap_paths.cpp's PSP_DATA discovery to find them --
+    # that wiring is not done here yet.
+    if(COMMAND nx_generate_nacp)
+        nx_generate_nacp(${CMAKE_BINARY_DIR}/VCSNative.nacp
+            NAME "GTA Vice City Stories (Native)"
+            AUTHOR "PSPRecomp / VCSNative contributors"
+            VERSION "0.1.0")
+        nx_create_nro(VCSNative
+            NACP ${CMAKE_BINARY_DIR}/VCSNative.nacp)
+    else()
+        message(WARNING
+            "NINTENDO_SWITCH is set but nx_generate_nacp/nx_create_nro are not "
+            "available -- configure with "
+            "-DCMAKE_TOOLCHAIN_FILE=$ENV{DEVKITPRO}/cmake/Switch.cmake so "
+            "VCSNative.nro actually gets produced.")
+    endif()
 endif()
 add_custom_command(TARGET VCSNative POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
