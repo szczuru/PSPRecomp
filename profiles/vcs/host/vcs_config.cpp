@@ -24,6 +24,14 @@
 #include <windows.h>
 #endif
 
+#if defined(__SWITCH__)
+// devkitA64's newlib exports setenv() but hides its prototype under
+// -std=c++20 (this project builds with CMAKE_CXX_EXTENSIONS OFF, i.e. strict
+// ISO mode). extern "C" linkage-specifications are only valid at namespace
+// scope, so this has to live here rather than next to the call site.
+extern "C" int setenv(const char *envname, const char *envval, int overwrite);
+#endif
+
 namespace vcs {
 namespace {
 
@@ -562,14 +570,8 @@ std::mutex &global_configuration_mutex() {
 void set_environment_value(const char *name, const std::string &value) {
 #if defined(_WIN32)
     _putenv_s(name, value.c_str());
-#elif defined(__SWITCH__)
-    // devkitA64's newlib exports setenv() but hides its prototype under
-    // -std=c++20 (this project builds with CMAKE_CXX_EXTENSIONS OFF, i.e.
-    // strict ISO mode). The symbol is still there, so declare it ourselves
-    // instead of fighting feature-test-macro header ordering.
-    extern "C" int setenv(const char *envname, const char *envval, int overwrite);
-    setenv(name, value.c_str(), 1);
 #else
+    // The __SWITCH__ prototype is declared at the top of this file.
     setenv(name, value.c_str(), 1);
 #endif
 }
