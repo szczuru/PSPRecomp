@@ -9,6 +9,13 @@
 #include <sstream>
 
 namespace vcs {
+
+#if defined(__SWITCH__)
+// Same devkitA64/newlib strict -std=c++20 visibility issue as in
+// vcs_config.cpp and vcs_profile.cpp; declared once at namespace scope.
+extern "C" struct tm *localtime_r(const std::time_t *timer, struct tm *result);
+#endif
+
 namespace {
 
 struct RuntimeLogState {
