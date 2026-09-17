@@ -145,7 +145,14 @@ function(vcs_target_common target)
         "${VCS_PROFILE_DIR}/host"
         "${VCS_PROFILE_DIR}/generated"
         "${VCS_PROFILE_DIR}/third_party/ffmpeg/include")
-    target_link_libraries(${target} PRIVATE psprecomp_core ${CMAKE_DL_LIBS})
+    if(NINTENDO_SWITCH)
+        # No dlopen()/libdl on Switch homebrew (newlib has no dynamic loader),
+        # so CMAKE_DL_LIBS -- which CMake resolves to "dl" here as if this
+        # were a normal Unix -- doesn't exist and must not be linked.
+        target_link_libraries(${target} PRIVATE psprecomp_core)
+    else()
+        target_link_libraries(${target} PRIVATE psprecomp_core ${CMAKE_DL_LIBS})
+    endif()
     if(WIN32)
         foreach(VCS_FFMPEG_LIB avcodec avformat avutil swresample swscale)
             target_link_libraries(${target} PRIVATE
