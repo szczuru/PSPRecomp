@@ -50,6 +50,14 @@ void set_runtime_post_import_hook(RuntimePostImportHook hook) noexcept;
 }
 
 namespace vcs {
+
+#if defined(__SWITCH__)
+// devkitA64's newlib exports localtime_r() but hides its prototype under
+// -std=c++20 (this project builds with CMAKE_CXX_EXTENSIONS OFF). extern "C"
+// linkage-specifications are only valid at namespace scope, hence here.
+extern "C" struct tm *localtime_r(const std::time_t *timer, struct tm *result);
+#endif
+
 namespace {
 
 struct DeflateFastPending {
@@ -9069,11 +9077,6 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             std::tm parts{};
 #if defined(_WIN32)
             localtime_s(&parts, &seconds);
-#elif defined(__SWITCH__)
-            // Same strict -std=c++20/newlib visibility issue as setenv() in
-            // vcs_config.cpp: the symbol exists, the prototype is hidden.
-            extern "C" struct tm *localtime_r(const std::time_t *timer, struct tm *result);
-            localtime_r(&seconds, &parts);
 #else
             localtime_r(&seconds, &parts);
 #endif
