@@ -168,8 +168,29 @@ function(vcs_target_common target)
         # first rather than changing this search.
         foreach(VCS_FFMPEG_LIB avcodec avformat avutil swresample swscale)
             find_library(VCS_SWITCH_${VCS_FFMPEG_LIB} NAMES ${VCS_FFMPEG_LIB} REQUIRED)
-            target_link_libraries(${target} PRIVATE ${VCS_SWITCH_${VCS_FFMPEG_LIB}})
         endforeach()
+        # switch-ffmpeg's static libs call into zlib/bzip2/dav1d internally
+        # (PNG/DXA/CSCD/etc. codecs, Matroska demuxing, AV1 decode) -- those
+        # are separate portlibs and have to be linked explicitly, or every
+        # inflate()/uncompress()/BZ2_*/dav1d_* call is an undefined reference.
+        find_library(VCS_SWITCH_z NAMES z REQUIRED)
+        find_library(VCS_SWITCH_bz2 NAMES bz2 REQUIRED)
+        find_library(VCS_SWITCH_dav1d NAMES dav1d REQUIRED)
+        # avformat/avcodec/avutil also reference each other in both
+        # directions, which a single left-to-right static-archive pass can't
+        # resolve -- wrap them in --start-group/--end-group so ld retries
+        # until everything's satisfied instead of caring about order.
+        target_link_libraries(${target} PRIVATE
+            -Wl,--start-group
+            ${VCS_SWITCH_avformat}
+            ${VCS_SWITCH_avcodec}
+            ${VCS_SWITCH_avutil}
+            ${VCS_SWITCH_swresample}
+            ${VCS_SWITCH_swscale}
+            ${VCS_SWITCH_dav1d}
+            ${VCS_SWITCH_bz2}
+            ${VCS_SWITCH_z}
+            -Wl,--end-group)
         target_link_libraries(${target} PRIVATE nx)
     else()
         # The profile vendors FFmpeg 7 headers. Some validation hosts install only
