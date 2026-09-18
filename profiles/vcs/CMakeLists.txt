@@ -261,27 +261,44 @@ if(WIN32)
 endif()
 
 if(NINTENDO_SWITCH)
-    # Untested packaging step. Requires devkitPro's switch-cmake support
-    # (nx_generate_nacp / nx_create_nro), normally pulled in by building with
-    # -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake. VCSNative.ini,
-    # ProperShaders.ini and VCSProject2DFX_Lights.bin are copied to
-    # $<TARGET_FILE_DIR:VCSNative> below regardless of platform; on Switch
-    # they still need to end up on the SD card next to the .nro (or inside a
-    # romfs) for vcs_bootstrap_paths.cpp's PSP_DATA discovery to find them --
-    # that wiring is not done here yet.
-    if(COMMAND nx_generate_nacp)
-        nx_generate_nacp(${CMAKE_BINARY_DIR}/VCSNative.nacp
-            NAME "GTA Vice City Stories (Native)"
-            AUTHOR "PSPRecomp / VCSNative contributors"
-            VERSION "0.1.0")
-        nx_create_nro(VCSNative
-            NACP ${CMAKE_BINARY_DIR}/VCSNative.nacp)
+    # Packaging into a .nro. There is no single official devkitPro CMake
+    # macro for this -- every project (nxengine-evo, devilutionX, etc.) rolls
+    # its own add_custom_command around the real, standalone `nacptool` and
+    # `elf2nro` binaries, so that's what this does too. Both ship in the
+    # `switch-tools` devkitPro package (part of the `switch-dev` group); the
+    # CI workflow installs it explicitly.
+    #
+    # VCSNative.ini, ProperShaders.ini and VCSProject2DFX_Lights.bin are
+    # copied to $<TARGET_FILE_DIR:VCSNative> above regardless of platform;
+    # on Switch they still need to end up on the SD card next to the .nro
+    # (or inside a romfs) for vcs_bootstrap_paths.cpp's PSP_DATA discovery
+    # to find them -- that wiring is not done here yet.
+    find_program(VCS_NACPTOOL nacptool HINTS "$ENV{DEVKITPRO}/tools/bin")
+    find_program(VCS_ELF2NRO elf2nro HINTS "$ENV{DEVKITPRO}/tools/bin")
+    if(VCS_NACPTOOL AND VCS_ELF2NRO)
+        set(VCS_SWITCH_NACP "${CMAKE_CURRENT_BINARY_DIR}/VCSNative.nacp")
+        set(VCS_SWITCH_NRO "${CMAKE_CURRENT_BINARY_DIR}/VCSNative.nro")
+        add_custom_command(
+            OUTPUT "${VCS_SWITCH_NACP}"
+            COMMAND "${VCS_NACPTOOL}" --create
+                "GTA Vice City Stories (Native)"
+                "PSPRecomp / VCSNative contributors"
+                "0.1.0"
+                "${VCS_SWITCH_NACP}"
+            VERBATIM)
+        add_custom_command(
+            OUTPUT "${VCS_SWITCH_NRO}"
+            COMMAND "${VCS_ELF2NRO}" "$<TARGET_FILE:VCSNative>" "${VCS_SWITCH_NRO}"
+                "--nacp=${VCS_SWITCH_NACP}"
+            DEPENDS VCSNative "${VCS_SWITCH_NACP}"
+            VERBATIM)
+        add_custom_target(VCSNative_nro ALL DEPENDS "${VCS_SWITCH_NRO}")
     else()
         message(WARNING
-            "NINTENDO_SWITCH is set but nx_generate_nacp/nx_create_nro are not "
-            "available -- configure with "
-            "-DCMAKE_TOOLCHAIN_FILE=$ENV{DEVKITPRO}/cmake/Switch.cmake so "
-            "VCSNative.nro actually gets produced.")
+            "NINTENDO_SWITCH is set but nacptool/elf2nro were not found "
+            "under $ENV{DEVKITPRO}/tools/bin -- install the devkitPro "
+            "`switch-tools` package so VCSNative.nro actually gets produced. "
+            "VCSNative.elf will still build, just not the packaged .nro.")
     endif()
 endif()
 add_custom_command(TARGET VCSNative POST_BUILD
