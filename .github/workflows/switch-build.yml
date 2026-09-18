@@ -24,13 +24,15 @@ jobs:
 
       # switch-ffmpeg isn't in the base image; the profile's CMakeLists.txt
       # (NINTENDO_SWITCH branch) find_library()s avcodec/avformat/avutil/
-      # swresample/swscale by name and needs this installed first.
+      # swresample/swscale, plus zlib/bzip2/dav1d, and needs those installed
+      # first. switch-tools provides nacptool/elf2nro for the .nro packaging
+      # step at the bottom of the same CMakeLists.txt.
       - name: Install extra devkitPro packages
         shell: bash
         run: |
           export DEVKITPRO=/opt/devkitpro
           export PATH="${DEVKITPRO}/tools/bin:${PATH}"
-          dkp-pacman -Sy --noconfirm --needed switch-ffmpeg switch-cmake
+          dkp-pacman -Sy --noconfirm --needed switch-ffmpeg switch-tools
 
       - name: Configure
         shell: bash
