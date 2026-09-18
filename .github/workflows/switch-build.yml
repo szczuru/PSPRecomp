@@ -5,6 +5,8 @@ name: Build VCSNative (Nintendo Switch)
 # package names or CMake flags on the first real run in Actions.
 
 on:
+  push:
+    branches: [switch-port]
   pull_request:
     branches: [switch-port]
   workflow_dispatch:
@@ -47,13 +49,20 @@ jobs:
 
       - name: Build
         shell: bash
-        run: cmake --build build-switch --target VCSNative -- -j"$(nproc)"
+        # Build the packaging target, not just the raw executable: VCSNative_nro
+        # depends on VCSNative (defined in CMakeLists.txt's NINTENDO_SWITCH
+        # block), so this still builds the .elf first, then runs
+        # nacptool/elf2nro to produce the .nacp/.nro. Building only
+        # `--target VCSNative` (as before) skips that packaging step
+        # entirely, since nothing else in the "all" target set depends on it
+        # the way this invocation is scoped.
+        run: cmake --build build-switch --target VCSNative_nro -- -j"$(nproc)"
 
       - name: Locate build output
         shell: bash
         run: |
           echo "Looking for .nro/.nacp/.elf output:"
-          find build-switch -maxdepth 4 \( -name '*.nro' -o -name '*.nacp' -o -name 'VCSNative' \) -print
+          find build-switch -maxdepth 6 \( -name '*.nro' -o -name '*.nacp' -o -name '*.elf' \) -print
 
       - name: Upload build output
         uses: actions/upload-artifact@v4
@@ -62,6 +71,6 @@ jobs:
           path: |
             build-switch/**/*.nro
             build-switch/**/*.nacp
-            build-switch/**/VCSNative
+            build-switch/**/*.elf
           if-no-files-found: warn
           retention-days: 14
