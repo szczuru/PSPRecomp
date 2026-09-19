@@ -276,8 +276,8 @@ if(NINTENDO_SWITCH)
     find_program(VCS_NACPTOOL nacptool HINTS "$ENV{DEVKITPRO}/tools/bin")
     find_program(VCS_ELF2NRO elf2nro HINTS "$ENV{DEVKITPRO}/tools/bin")
     if(VCS_NACPTOOL AND VCS_ELF2NRO)
-        set(VCS_SWITCH_NACP "${CMAKE_CURRENT_BINARY_DIR}/VCSNative.nacp")
-        set(VCS_SWITCH_NRO "${CMAKE_CURRENT_BINARY_DIR}/VCSNative.nro")
+        set(VCS_SWITCH_NACP "$<TARGET_FILE_DIR:VCSNative>/VCSNative.nacp")
+        set(VCS_SWITCH_NRO "$<TARGET_FILE_DIR:VCSNative>/VCSNative.nro")
         add_custom_command(
             OUTPUT "${VCS_SWITCH_NACP}"
             COMMAND "${VCS_NACPTOOL}" --create
