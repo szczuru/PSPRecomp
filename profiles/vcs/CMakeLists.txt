@@ -276,8 +276,13 @@ if(NINTENDO_SWITCH)
     find_program(VCS_NACPTOOL nacptool HINTS "$ENV{DEVKITPRO}/tools/bin")
     find_program(VCS_ELF2NRO elf2nro HINTS "$ENV{DEVKITPRO}/tools/bin")
     if(VCS_NACPTOOL AND VCS_ELF2NRO)
-        set(VCS_SWITCH_NACP "$<TARGET_FILE_DIR:VCSNative>/VCSNative.nacp")
-        set(VCS_SWITCH_NRO "$<TARGET_FILE_DIR:VCSNative>/VCSNative.nro")
+        # $<TARGET_FILE_DIR:...> only works in COMMAND, not in OUTPUT --
+        # using it in OUTPUT fails configure with "No target VCSNative" even
+        # though the target obviously exists (defined above). OUTPUT needs a
+        # plain path, so this matches vcs_set_runtime_output()'s
+        # RUNTIME_OUTPUT_DIRECTORY literally instead of asking the target for it.
+        set(VCS_SWITCH_NACP "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/VCSNative.nacp")
+        set(VCS_SWITCH_NRO "${CMAKE_BINARY_DIR}/bin/$<CONFIG>/VCSNative.nro")
         add_custom_command(
             OUTPUT "${VCS_SWITCH_NACP}"
             COMMAND "${VCS_NACPTOOL}" --create
