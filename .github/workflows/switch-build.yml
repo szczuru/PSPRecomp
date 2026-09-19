@@ -5,8 +5,6 @@ name: Build VCSNative (Nintendo Switch)
 # package names or CMake flags on the first real run in Actions.
 
 on:
-  push:
-    branches: [switch-port]
   pull_request:
     branches: [switch-port]
   workflow_dispatch:
@@ -61,16 +59,18 @@ jobs:
       - name: Locate build output
         shell: bash
         run: |
-          echo "Looking for .nro/.nacp/.elf output:"
-          find build-switch -maxdepth 6 \( -name '*.nro' -o -name '*.nacp' -o -name '*.elf' \) -print
+          echo "Contents of build-switch/bin:"
+          find build-switch/bin -maxdepth 3 -type f -print
 
       - name: Upload build output
         uses: actions/upload-artifact@v4
         with:
           name: VCSNative-switch
-          path: |
-            build-switch/**/*.nro
-            build-switch/**/*.nacp
-            build-switch/**/*.elf
+          # .nacp/.nro now land in the same $<TARGET_FILE_DIR:VCSNative>
+          # directory as the .elf and the .ini/.bin/.md/.txt files the
+          # CMakeLists.txt copies alongside it (see its bottom
+          # add_custom_command), so grabbing the whole bin/ tree gets
+          # everything needed to actually run this in one place.
+          path: build-switch/bin/**
           if-no-files-found: warn
           retention-days: 14
