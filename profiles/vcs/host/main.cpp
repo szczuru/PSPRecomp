@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
     // catch block's error message) goes nowhere visible on real hardware --
     // that's why earlier failures produced no message and no log file.
     socketInitializeDefault();
-    nxlinkStdio("stdout");
+    nxlinkStdio();
     std::cerr << "[switch] argc=" << argc << "\n";
     for (int i = 0; i < argc; ++i) {
         std::cerr << "[switch] argv[" << i << "]=" << (argv[i] != nullptr ? argv[i] : "(null)") << "\n";
