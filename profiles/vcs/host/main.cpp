@@ -124,6 +124,16 @@ std::filesystem::path native_executable_directory(const char *argv0) {
         }
         buffer.resize(buffer.size() * 2u);
     }
+#elif defined(__SWITCH__)
+    // std::filesystem::absolute() doesn't recognise libnx's "sdmc:/..."
+    // device-prefixed paths as already absolute (it only checks for a
+    // leading '/'), so it prepends the current working directory instead of
+    // leaving the path alone -- producing exactly the doubled
+    // "sdmc:/switch/sdmc:/switch/..." seen on real hardware. argv[0] from
+    // nx-hbloader/nxlink is already a fully qualified "sdmc:/..." path, so
+    // just take its parent directly with no absolute() call at all.
+    if (argv0 == nullptr) throw psprecomp::Error("argv[0] missing; cannot locate VCSNative.nro");
+    return std::filesystem::path(argv0).parent_path();
 #else
     return std::filesystem::absolute(argv0 != nullptr ? argv0 : "VCSNative").parent_path();
 #endif
@@ -158,34 +168,54 @@ void validate_vcs_game_root(const std::filesystem::path &root) {
 
 } // namespace
 
+#if defined(__SWITCH__)
+namespace {
+// Plain-file breadcrumb log: no network, no config file, no dependency on
+// anything that could itself hang or silently fail. Opens, writes one line,
+// and closes on every call so whatever was written survives even if the
+// very next line freezes or crashes the app -- unlike an ofstream kept open
+// for the process lifetime, which can lose buffered, unflushed writes.
+void switch_breadcrumb(const char *message) {
+    std::FILE *file = std::fopen("sdmc:/switch/VCSNative/boot_debug.txt", "a");
+    if (file == nullptr) return;
+    std::fprintf(file, "%s\n", message);
+    std::fclose(file);
+}
+} // namespace
+#endif
+
 int main(int argc, char **argv) {
 #ifdef _WIN32
     SetUnhandledExceptionFilter(&vcs_unhandled_exception_filter);
 #endif
 #if defined(__SWITCH__)
-    // Debug-only: redirects stdout/stderr over the network so
-    // `nxlink -s VCSNative.nro` from a PC on the same network shows console
-    // output live. Without this, every std::cerr write below (including the
-    // catch block's error message) goes nowhere visible on real hardware --
-    // that's why earlier failures produced no message and no log file.
-    socketInitializeDefault();
-    nxlinkStdio();
-    std::cerr << "[switch] argc=" << argc << "\n";
-    for (int i = 0; i < argc; ++i) {
-        std::cerr << "[switch] argv[" << i << "]=" << (argv[i] != nullptr ? argv[i] : "(null)") << "\n";
-    }
+    // Previous version of this block called socketInitializeDefault() +
+    // nxlinkStdio() unconditionally here, before anything else in main().
+    // That is almost certainly why the app hung with a black screen and no
+    // log file: nxlinkStdio() waits to find a listening `nxlink -s` on the
+    // network, and blocks doing so when nothing is listening -- which is
+    // the normal case for every run except the one where you're actively
+    // debugging with nxlink open on a PC. Replaced with a plain file write
+    // that can never block on the network.
+    switch_breadcrumb("main() entered");
 #endif
     try {
         const std::filesystem::path executable_directory =
             native_executable_directory(argc > 0 ? argv[0] : nullptr);
 #if defined(__SWITCH__)
-        std::cerr << "[switch] executable_directory=" << executable_directory.string() << "\n";
+        switch_breadcrumb(("executable_directory=" + executable_directory.string()).c_str());
 #endif
         const vcs::BootstrapPaths paths =
             vcs::resolve_bootstrap_paths(argc, argv, executable_directory);
+#if defined(__SWITCH__)
+        switch_breadcrumb("resolve_bootstrap_paths() returned");
+#endif
         const std::filesystem::path &executable = paths.psp_executable;
         const std::filesystem::path &root = paths.game_root;
         vcs::initialize_vcs_configuration(executable_directory);
+#if defined(__SWITCH__)
+        switch_breadcrumb("initialize_vcs_configuration() returned");
+#endif
         const vcs::VcsConfiguration &configuration = vcs::vcs_configuration();
         vcs::runtime_log_initialize(configuration);
         vcs::runtime_log_line(std::string("bootstrap executable=") + executable.string());
@@ -193,6 +223,9 @@ int main(int argc, char **argv) {
         vcs::runtime_log_line(std::string("rendering backend=") +
                               vcs::rendering_backend_name(configuration.rendering.backend));
         validate_vcs_game_root(root);
+#if defined(__SWITCH__)
+        switch_breadcrumb("validate_vcs_game_root() passed");
+#endif
 
         psprecomp::Elf32Image elf = psprecomp::Elf32Image::from_file(executable);
         psprecomp::Runtime runtime(32u * 1024u * 1024u);
@@ -315,7 +348,13 @@ int main(int argc, char **argv) {
         runtime.cpu().set_gpr(5, 0u);
         const std::uint64_t max_dispatches = configured_max_dispatches();
         std::cout << "Dispatch cap: " << max_dispatches << "\n";
+#if defined(__SWITCH__)
+        switch_breadcrumb("calling display_window_start()");
+#endif
         vcs::display_window_start();
+#if defined(__SWITCH__)
+        switch_breadcrumb("display_window_start() returned; entering runtime.run()");
+#endif
         vcs::install_display_heartbeat();
         vcs::install_starvation_preemption();
         runtime.run(elf.runtime_entry(), max_dispatches);
