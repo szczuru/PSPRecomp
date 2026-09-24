@@ -511,6 +511,9 @@ int main(int argc, char **argv) {
         return runtime.stop_reason().empty() ? 0 : 4;
     } catch (const std::exception &e) {
         std::cerr << "VCSNative error: " << e.what() << "\n";
+#if defined(__SWITCH__)
+        switch_breadcrumb((std::string("EXCEPTION: ") + e.what()).c_str());
+#endif
         return 1;
     }
 }
