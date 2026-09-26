@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -1006,23 +1007,72 @@ void display_window_start() {
 void display_window_set_status(const char *) {}
 void display_window_set_aspect_lock(bool) noexcept {}
 
+namespace {
+// Same idea as main.cpp's switch_breadcrumb (separate translation unit, can't
+// share the anonymous-namespace one there): a plain, unbuffered file append,
+// used here to count how often each branch below actually fires instead of
+// spamming one line per frame.
+void present_breadcrumb(const char *message) {
+    std::FILE *file = std::fopen("sdmc:/switch/VCSNative/boot_debug.txt", "a");
+    if (file == nullptr) return;
+    std::fprintf(file, "%s\n", message);
+    std::fclose(file);
+}
+} // namespace
+
 void display_window_present(const psprecomp::GuestMemory &memory,
                             const FramebufferDescription &description) {
+    static std::uint64_t call_count = 0u;
+    ++call_count;
+    if (call_count <= 5u || call_count % 300u == 0u) {
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer),
+                     "display_window_present() call #%llu width=%u height=%u started=%d",
+                     static_cast<unsigned long long>(call_count), description.width,
+                     description.height, state().started ? 1 : 0);
+        present_breadcrumb(buffer);
+    }
     if (!state().started || description.width == 0u || description.height == 0u) return;
     const std::vector<std::byte> rgba = decode_framebuffer_rgba(memory, description);
+    if (call_count <= 5u) {
+        char buffer[96];
+        std::snprintf(buffer, sizeof(buffer), "decode_framebuffer_rgba() returned %zu bytes",
+                     rgba.size());
+        present_breadcrumb(buffer);
+    }
     display_window_present_rgba(rgba, description.width, description.height);
 }
 
 void display_window_present_rgba(std::span<const std::byte> rgba,
                                  std::uint32_t width, std::uint32_t height) {
     SwitchWindowState &s = state();
+    static std::uint64_t rgba_call_count = 0u;
+    ++rgba_call_count;
     if (!s.started || width == 0u || height == 0u) return;
-    if (rgba.size() < static_cast<std::size_t>(width) * height * 4u) return;
+    if (rgba.size() < static_cast<std::size_t>(width) * height * 4u) {
+        if (rgba_call_count <= 5u) {
+            char buffer[128];
+            std::snprintf(buffer, sizeof(buffer),
+                         "present_rgba: size mismatch, have=%zu need=%zu -- early return",
+                         rgba.size(), static_cast<std::size_t>(width) * height * 4u);
+            present_breadcrumb(buffer);
+        }
+        return;
+    }
     u32 stride = 0u;
     auto *out = reinterpret_cast<std::uint8_t *>(framebufferBegin(&s.fb, &stride));
-    if (out == nullptr) return;
+    if (out == nullptr) {
+        if (rgba_call_count <= 5u) present_breadcrumb("present_rgba: framebufferBegin returned null");
+        return;
+    }
     blit_rgba_nearest(rgba.data(), width, height, out, stride, kSwitchDisplayWidth, kSwitchDisplayHeight);
     framebufferEnd(&s.fb);
+    if (rgba_call_count <= 5u) {
+        char buffer[96];
+        std::snprintf(buffer, sizeof(buffer), "present_rgba: blitted+presented frame #%llu",
+                     static_cast<unsigned long long>(rgba_call_count));
+        present_breadcrumb(buffer);
+    }
 }
 
 DisplayWindowSurface display_window_surface() { return {}; }
