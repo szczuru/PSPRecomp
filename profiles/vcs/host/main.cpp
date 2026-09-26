@@ -358,6 +358,9 @@ int main(int argc, char **argv) {
         vcs::install_display_heartbeat();
         vcs::install_starvation_preemption();
         runtime.run(elf.runtime_entry(), max_dispatches);
+#if defined(__SWITCH__)
+        switch_breadcrumb(("runtime.run() returned; stop_reason=" + runtime.stop_reason()).c_str());
+#endif
         const bool shutdown_diag = std::getenv("PSPRECOMP_SHUTDOWN_DIAG") != nullptr;
         if (shutdown_diag) std::cerr << "[shutdown] runtime-run-returned\n";
         std::cout << "Runtime stopped: " << runtime.stop_reason() << "\n";
