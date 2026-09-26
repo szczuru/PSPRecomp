@@ -492,7 +492,19 @@ void Runtime::register_hle(std::string library, std::uint32_t nid, HleFunction f
 bool Runtime::has_function(std::uint32_t address) const { return lookup_function(address) != nullptr; }
 std::size_t Runtime::function_count() const noexcept { return functions_.size(); }
 
-void Runtime::set_game_root(std::filesystem::path root) { game_root_ = std::filesystem::weakly_canonical(std::move(root)); }
+void Runtime::set_game_root(std::filesystem::path root) {
+    // weakly_canonical() throws if the underlying canonical()/realpath() call
+    // fails; on some platforms (observed on Nintendo Switch/libnx's newlib,
+    // which doesn't fully support realpath() for devoptab-mounted paths like
+    // "sdmc:/...") that throws "cannot make canonical path" for a perfectly
+    // valid, existing directory. Fall back to the path as given instead of
+    // crashing the whole runtime over what is ultimately a cosmetic
+    // normalization step -- every caller of game_root() just needs a usable
+    // path, not necessarily the canonical one.
+    std::error_code error;
+    std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root, error);
+    game_root_ = error ? std::move(root) : std::move(canonical_root);
+}
 const std::filesystem::path &Runtime::game_root() const noexcept { return game_root_; }
 
 std::filesystem::path Runtime::translate_path(const std::string &psp_path) const {
