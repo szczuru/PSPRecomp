@@ -1004,14 +1004,11 @@ void display_window_start() {
     s.started = true;
 }
 
-void display_window_set_status(const char *) {}
-void display_window_set_aspect_lock(bool) noexcept {}
-
 namespace {
-// Same idea as main.cpp's switch_breadcrumb (separate translation unit, can't
-// share the anonymous-namespace one there): a plain, unbuffered file append,
-// used here to count how often each branch below actually fires instead of
-// spamming one line per frame.
+// Plain, unbuffered file append -- separate from main.cpp's own
+// switch_breadcrumb (different translation unit, anonymous-namespace
+// symbols don't cross that boundary), used both by the heartbeat status
+// below and by the present-path diagnostics further down.
 void present_breadcrumb(const char *message) {
     std::FILE *file = std::fopen("sdmc:/switch/VCSNative/boot_debug.txt", "a");
     if (file == nullptr) return;
@@ -1019,6 +1016,17 @@ void present_breadcrumb(const char *message) {
     std::fclose(file);
 }
 } // namespace
+
+void display_window_set_status(const char *status) {
+    // Wired to the heartbeat hook installed by install_display_heartbeat()
+    // (fires every ~4M dispatches regardless of whether any frame has been
+    // presented yet) -- cheapest way to see whether the CPU interpreter is
+    // actually making forward progress during the apparent hang, and
+    // roughly where (which PC) it's spending its time.
+    if (status == nullptr) return;
+    present_breadcrumb(status);
+}
+void display_window_set_aspect_lock(bool) noexcept {}
 
 void display_window_present(const psprecomp::GuestMemory &memory,
                             const FramebufferDescription &description) {
